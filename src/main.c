@@ -14,7 +14,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include "charmap.h"
+#include "tiles.h"
 #include "utils.h"
 
 #ifndef NO_AVR
@@ -120,8 +120,8 @@ static void lcd_delay(unsigned int a) {
 
 static void lcd_pulse() {
   PORTC = PORTC | 0b00000100; //set E to high
-  //lcd_delay(1400);          //delay ~110ms
-  lcd_delay(700);
+  lcd_delay(1400);          //delay ~110ms
+  //lcd_delay(700);
   PORTC = PORTC & 0b11111011; //set E to low
 }
 
@@ -462,6 +462,36 @@ void mirror(unsigned char *line0_buffer, unsigned char *line1_buffer, int line_l
         mirror_patterns(&line0_buffer[i], &line1_buffer[i]);
 }
 
+int hibit(int num) {
+    int r = 1;
+
+    while (num >>= 1) {
+        r++;
+    }
+    return r;
+}
+
+void create_tiles(unsigned char *line0_buffer, unsigned char *line1_buffer, int map[4][6], int buffer_size, int tick) {
+    tick = tick % TICK_INTERVAL;
+    for (int i = 0; i < buffer_size; ++i) {
+        line0_buffer[i] = 0;
+        line1_buffer[i] = 0;
+    }
+
+    for (int k = 0; k < 2; k++) {
+        for (int l = 0; l < 6; l++) {
+            int ch = (int)('0' + ((map[k][l] / (1 << 5)) != 0) + 5 - 5 * ticks[hibit(map[k][l]) % 5 + 1][tick]);
+            int ch2 = (int)('0' + ((map[k+2][l] / (1 << 5)) != 0) + 5 - 5 * ticks[hibit(map[k+2][l]) % 5 + 1][tick]);
+            for (int j = 0; j < CHAR_WIDTH; ++j) {
+                int index = (CHAR_WIDTH) * l + j;
+                if (map[k][l] != 0)
+                    line0_buffer[index] = line0_buffer[index] | (charmap[ch][j]  << 2 * k);
+                if (map[k+2][l] != 0)
+                    line1_buffer[index] = line1_buffer[index] | (charmap[ch2][j]  << 2 * k);
+            }
+        }
+    }
+}
 
 // MAIN ENTRY POINT ----------------------------------------------------------
 
@@ -474,45 +504,22 @@ int main(void)
 #endif
     lcd_init();
 
-    const char *message = "=+= EMBEDDED SYSTEMS AVR BOARD AMOTEC HD44780 16x2 LCD DEMO 2015-12-03 =+=";
-
+    int map[4][6] = {{ 0, 1 << 3, 0, 1 << 1, 0, 1 << 6}, { 0, 1 << 2, 0, 1 << 7, 0, 0}, { 0, 1 << 3, 0, 1 << 10, 1 << 4, 1 << 3}, { 0, 0, 0, 1 << 3, 0, 1 << 5}};
+    int line_len = 18;
     const int buffer_size = MAX_LEN * (CHAR_WIDTH + 1);
     unsigned char line0_buffer[buffer_size];
     unsigned char line1_buffer[buffer_size];
 
-    for (int i = 0; i < buffer_size; ++i) {
-        line0_buffer[i] = 0;
-        line1_buffer[i] = 0;
-    }
-
-    // Cut the string above the maximum
-    int len = MIN(strlen(message), MAX_LEN);
-
-    for (int i = 0; i < len; ++i) {
-        int ch = (int)message[i];
-        for (int j = 0; j < CHAR_WIDTH; ++j) {
-            int index = (CHAR_WIDTH + 1) * i + j;
-            line0_buffer[index] = charmap[ch][j] & 0b1111;
-            line1_buffer[index] = (charmap[ch][j] >> 4) & 0b1111;
-        }
-
-        // Insert space between characters
-        int index = (CHAR_WIDTH + 1) * i + CHAR_WIDTH;
-        line0_buffer[index] = 0x0;
-        line1_buffer[index] = 0x0;
-    }
+    create_tiles(&line0_buffer[0], &line1_buffer[0], map, buffer_size, 1);
 
     init_pattern_map();
 
-    // Add extra whitespace to the end
-    const int line_len = MAX(len * (CHAR_WIDTH + 1) + 2, LCD_WIDTH);
     int buffer_index = 0;
-    int enable_slide = (line_len - 3) > LCD_WIDTH;
-
+    int enable_slide = 0;
     uint16_t cycle = 0;
 
-    lcd_send_line1("  AVR SLIDESHOW");
-    lcd_send_line2("  by Peter Varga");
+    lcd_send_line1(" 2048 ");
+    lcd_send_line2("by N0rbi forked from: Peter Varga");
     while (cycle++ < 10000 && !button_pressed()) {
 #ifdef NO_AVR
         lcd_delay(0);
@@ -530,6 +537,7 @@ int main(void)
         if (cycle >= 65000U)
             cycle = 0;
 
+        create_tiles(&line0_buffer[0], &line1_buffer[0], map, buffer_size, cycle);
         int button = button_pressed();
         if (button == BUTTON_CENTER)
             enable_slide ^= 1;
@@ -547,14 +555,14 @@ int main(void)
         if (button == BUTTON_QUIT)
             break;
 #endif
-
+        show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
         if (enable_slide && cycle % 5000 == 0) {
             if (++buffer_index >= line_len)
                 buffer_index = 0;
 
             show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
 #ifdef NO_AVR
-            lcd_delay(70);
+            lcd_delay(200);
 #else
             lcd_delay(10);
 #endif
