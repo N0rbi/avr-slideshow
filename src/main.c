@@ -1,6 +1,11 @@
 /**
  * AVR Slideshow
  * by Peter Varga
+ *
+ * ...
+ *
+ * modified into gatherer game
+ * by N0rbi
  */
 
 #ifdef NO_AVR
@@ -14,7 +19,6 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include "charmap.h"
 #include "utils.h"
 
 #ifndef NO_AVR
@@ -31,7 +35,10 @@
 #endif // NO_AVR
 
 #define MAX_LEN 128
+#define END_GAME_THRESHOLD 24
 #define LCD_WIDTH 16
+
+#define CHAR_WIDTH 1
 
 #ifndef NO_AVR
 // GENERAL INIT - USED BY ALMOST EVERYTHING ----------------------------------
@@ -194,10 +201,44 @@ static void lcd_send_line2(char *str) {
   lcd_send_command(DD_RAM_ADDR2);
   lcd_send_text(str);
 }
+#else
+static int rnd_gen(int max) {
+  return rand() % max;
+}
 #endif // NO_AVR
 
 
 // CUSTOM STUFF --------------------------------------------------------------
+
+typedef struct Game_str {
+    int playerPos, playerWidth, playerScore, maxScore;
+} Game;
+
+static void generate_map(unsigned char map[], int map_size) {
+    int i=0;
+    while (i < map_size-END_GAME_THRESHOLD) {
+        for(int j=0; j < 5; j++) {
+            (map)[i++] = 0x0;
+        }
+
+        (map)[i++] = (char)rnd_gen(8);
+    }
+    do {
+        map[i++] = 0;
+    } while (i < map_size);
+
+}
+
+static void render_player(unsigned char* line0_buffer, unsigned char* line1_buffer, Game game, int gameOffset) {
+    int start = MAX((game.playerPos - (game.playerWidth / 2)), 0);
+    int end = MIN((game.playerPos + (game.playerWidth / 2)), 7);
+
+    for (int i=start; i <= end; i++) {
+        line0_buffer[gameOffset] |= (1 << (i)) & 0b1111;
+        line1_buffer[gameOffset] |= ((1 << (i)) >> 4) & 0b1111;
+    }
+
+}
 
 static unsigned char pattern_map[16];
 
@@ -415,52 +456,6 @@ void show(unsigned char *line0_buffer, unsigned char *line1_buffer, int buffer_i
 #endif
 }
 
-unsigned char invert_pattern(unsigned char pattern)
-{
-    if (!pattern)
-        return 0;
-
-    unsigned char orig_pattern = pattern;
-    pattern = 0;
-
-    pattern |= (0x1 & orig_pattern) << 3;
-    pattern |= (0x2 & orig_pattern) << 1;
-    pattern |= (0x4 & orig_pattern) >> 1;
-    pattern |= (0x8 & orig_pattern) >> 3;
-
-    return pattern;
-}
-
-void upsidedown(unsigned char *line0_buffer, unsigned char *line1_buffer, int line_len)
-{
-    unsigned char tmp;
-    for (int i = 0; i < line_len; ++i) {
-        tmp = invert_pattern(line0_buffer[i]);
-        line0_buffer[i] = invert_pattern(line1_buffer[i]);
-        line1_buffer[i] = tmp;
-    }
-}
-
-
-void mirror_patterns(unsigned char *patterns0, unsigned char *patterns1)
-{
-    unsigned char tmp;
-    for (int i = 0; i < CHAR_WIDTH / 2; ++i) {
-        tmp = patterns0[i];
-        patterns0[i] = patterns0[CHAR_WIDTH-i-1];
-        patterns0[CHAR_WIDTH-i-1] = tmp;
-
-        tmp = patterns1[i];
-        patterns1[i] = patterns1[CHAR_WIDTH-i-1];
-        patterns1[CHAR_WIDTH-i-1] = tmp;
-    }
-}
-
-void mirror(unsigned char *line0_buffer, unsigned char *line1_buffer, int line_len)
-{
-    for (int i = 0; i < line_len; i += CHAR_WIDTH + 1)
-        mirror_patterns(&line0_buffer[i], &line1_buffer[i]);
-}
 
 
 // MAIN ENTRY POINT ----------------------------------------------------------
@@ -474,97 +469,164 @@ int main(void)
 #endif
     lcd_init();
 
-    const char *message = "=+= EMBEDDED SYSTEMS AVR BOARD AMOTEC HD44780 16x2 LCD DEMO 2015-12-03 =+=";
-
-    const int buffer_size = MAX_LEN * (CHAR_WIDTH + 1);
+    const int buffer_size = MAX_LEN + END_GAME_THRESHOLD;
     unsigned char line0_buffer[buffer_size];
     unsigned char line1_buffer[buffer_size];
+    float bestScore = 0.0;
+    while(1) {
+        unsigned char map[buffer_size];
 
-    for (int i = 0; i < buffer_size; ++i) {
-        line0_buffer[i] = 0;
-        line1_buffer[i] = 0;
-    }
+        Game game;
+        game.playerPos = 4;
+        game.maxScore = 0;
+        game.playerScore = 0;
+        game.playerWidth = 3;
 
-    // Cut the string above the maximum
-    int len = MIN(strlen(message), MAX_LEN);
+        generate_map(map, buffer_size);
 
-    for (int i = 0; i < len; ++i) {
-        int ch = (int)message[i];
-        for (int j = 0; j < CHAR_WIDTH; ++j) {
-            int index = (CHAR_WIDTH + 1) * i + j;
-            line0_buffer[index] = charmap[ch][j] & 0b1111;
-            line1_buffer[index] = (charmap[ch][j] >> 4) & 0b1111;
+        for (int i = 0; i < buffer_size; ++i) {
+            line0_buffer[i] = 0;
+            line1_buffer[i] = 0;
         }
 
-        // Insert space between characters
-        int index = (CHAR_WIDTH + 1) * i + CHAR_WIDTH;
-        line0_buffer[index] = 0x0;
-        line1_buffer[index] = 0x0;
-    }
+        for (int i = 0; i < buffer_size; ++i) {
+            if (map[i] == 0) continue;
+            line0_buffer[i] = (1 << (map[i]-1)) & 0b1111;
+            line1_buffer[i] = ((1 << (map[i]-1)) >> 4) & 0b1111;
+        }
 
-    init_pattern_map();
 
-    // Add extra whitespace to the end
-    const int line_len = MAX(len * (CHAR_WIDTH + 1) + 2, LCD_WIDTH);
-    int buffer_index = 0;
-    int enable_slide = (line_len - 3) > LCD_WIDTH;
+        init_pattern_map();
 
-    uint16_t cycle = 0;
+        render_player(line0_buffer, line1_buffer, game, 0);
 
-    lcd_send_line1("  AVR SLIDESHOW");
-    lcd_send_line2("  by Peter Varga");
-    while (cycle++ < 10000 && !button_pressed()) {
+        const int line_len = buffer_size;
+        int buffer_index = 0;
+        int enable_slide = (line_len - 3) > LCD_WIDTH;
+
+        uint16_t cycle = 0;
+
+        lcd_send_line1("  Gatherer");
+        lcd_send_line2("  by N0rbi");
+        while (cycle++ < 10000 && !button_pressed()) {
 #ifdef NO_AVR
-        lcd_delay(0);
+            lcd_delay(0);
 #else
-        lcd_delay(100);
+            lcd_delay(100);
 #endif
-        button_unlock();
-    }
-
-    // Show first frame before loop starts
-    show(&line0_buffer[0], &line1_buffer[0], 0, line_len);
-
-    cycle = 0;
-    while (cycle++ < UINT16_MAX) {
-        if (cycle >= 65000U)
-            cycle = 0;
-
-        int button = button_pressed();
-        if (button == BUTTON_CENTER)
-            enable_slide ^= 1;
-        if (button == BUTTON_UP || button == BUTTON_DOWN) {
-            upsidedown(&line0_buffer[0], &line1_buffer[0], line_len);
-            if (!enable_slide)
-                show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
+            button_unlock();
         }
-        if (button == BUTTON_LEFT || button == BUTTON_RIGHT) {
-            mirror(&line0_buffer[0], &line1_buffer[0], line_len);
-            if (!enable_slide)
-                show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
-        }
+
+        // Show first frame before loop starts
+        show(&line0_buffer[0], &line1_buffer[0], 0, line_len);
+
+        cycle = 0;
+        while (cycle++ < UINT16_MAX) {
+            if (cycle >= 65000U)
+                cycle = 0;
+
+            int button = button_pressed();
+            if (button == BUTTON_UP) {
+                game.playerPos = MAX(game.playerPos - 1, game.playerWidth / 2);
+            } else if (button == BUTTON_DOWN) {
+                game.playerPos = MIN(game.playerPos + 1, 7 - game.playerWidth / 2);
+            }
 #ifdef NO_AVR
-        if (button == BUTTON_QUIT)
+            if (button == BUTTON_QUIT)
             break;
 #endif
 
-        if (enable_slide && cycle % 5000 == 0) {
-            if (++buffer_index >= line_len)
-                buffer_index = 0;
+            if (enable_slide && cycle % 5000 == 0) {
+                if (++buffer_index >= line_len - END_GAME_THRESHOLD)
+                    break; //end of game
+                render_player(line0_buffer, line1_buffer, game, buffer_index);
+                show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
+                //update score:
+                int current_item_position = map[buffer_index] - 1;
+                if (current_item_position != -1) {
+                    int start = MAX((game.playerPos - (game.playerWidth / 2)), 0);
+                    int end = MIN((game.playerPos + (game.playerWidth / 2)), 7);
+                    if (current_item_position < game.playerWidth / 2 || current_item_position > (7 - (game.playerWidth / 2))) {
+                        // the player has no chance of getting the food with the center of their body
+                        game.maxScore += 3;
+                    } else {
+                        game.maxScore += 5;
+                    }
 
-            show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
+                    if (start <= current_item_position && end >= current_item_position) {
+                        game.playerScore +=3;
+
+                        if (game.playerPos == current_item_position) {
+
+                            game.playerScore += 2;
+                        }
+                    }
+                }
 #ifdef NO_AVR
-            lcd_delay(70);
+                lcd_delay(70);
 #else
-            lcd_delay(10);
+                lcd_delay(10);
 #endif
+            }
+
+            button_unlock();
         }
 
-        button_unlock();
+
+        char scoreStr[23];
+
+        float score = 1.0 * game.playerScore / game.maxScore;
+
+        for (int i=0; i<23; i++) {
+            scoreStr[i] = ' ';
+        }
+        int i = 3;
+        for (int j=1; j<5; j++) {
+            scoreStr[i++] = ((int)(score * power(10, j)) % 10) + '0';
+            if (j == 2) {
+                scoreStr[i++] = '.';
+            }
+        }
+
+
+        for (int i = 0; i < buffer_size; ++i) {
+            line0_buffer[i] = 0;
+            line1_buffer[i] = 0;
+        }
+
+        show(&line0_buffer[0], &line1_buffer[0], 0, line_len);
+
+        scoreStr[i++] = '%';
+
+        bestScore = MAX(bestScore, score);
+
+        i = 23 - 6;
+        for (int j=1; j<5; j++) {
+            scoreStr[i++] = ((int)(bestScore * power(10, j)) % 10) + '0';
+            if (j == 2) {
+                scoreStr[i++] = '.';
+            }
+        }
+        scoreStr[i++] = '%';
+        scoreStr[i++] = '\0';
+
+        lcd_send_line1("  Score:    Best Score:");
+        lcd_send_line2(scoreStr);
+
+        while(1) {
+            int button = button_pressed();
+            if (button == BUTTON_CENTER) {
+                break;
+            }
+            #ifdef NO_AVR
+                if (button == BUTTON_QUIT)
+                    goto EXIT_PROGRAM;
+            #endif
+        }
     }
 
 #ifdef NO_AVR
-    button_sim_terminate();
+    EXIT_PROGRAM: button_sim_terminate();
     lcd_sim_terminate();
 #endif
 
