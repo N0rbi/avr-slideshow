@@ -456,6 +456,38 @@ void show(unsigned char *line0_buffer, unsigned char *line1_buffer, int buffer_i
 #endif
 }
 
+typedef struct {
+    int freq;
+    int length;
+} tune_t;
+
+static tune_t TUNE_START[] = { { 2000, 40 }, { 0, 0 } };
+static tune_t TUNE_GOOD[] = { { 3000, 20 }, { 0, 0 } };
+static tune_t TUNE_PERFECT[] = { { 4000, 20 }, { 0, 0 } };
+static tune_t TUNE_GAMEOVER[] = { { 1000, 200 }, { 1500, 200 }, { 2000, 400 }, { 0, 0 } };
+
+
+#ifdef NO_AVR
+int PORTE = 0b00100000;
+#endif
+static void play_note(int freq, int len) {
+    for (int l = 0; l < len; ++l) {
+        int i;
+        PORTE = (PORTE & 0b11011111) | 0b00010000;	//set bit4 = 1; set bit5 = 0
+        for (i=freq; i; i--);
+        PORTE = (PORTE | 0b00100000) & 0b11101111;	//set bit4 = 0; set bit5 = 1
+        for (i=freq; i; i--);
+    }
+}
+
+static void play_tune(tune_t *tune) {
+#ifndef NO_AVR
+    while (tune->freq != 0) {
+        play_note(tune->freq, tune->length);
+        ++tune;
+    }
+#endif
+}
 
 
 // MAIN ENTRY POINT ----------------------------------------------------------
@@ -508,6 +540,7 @@ int main(void)
 
         lcd_send_line1("  Gatherer");
         lcd_send_line2("  by N0rbi");
+        play_tune(TUNE_START);
         while (cycle++ < 10000 && !button_pressed()) {
 #ifdef NO_AVR
             lcd_delay(0);
@@ -537,8 +570,10 @@ int main(void)
 #endif
 
             if (enable_slide && cycle % 5000 == 0) {
-                if (++buffer_index >= line_len - END_GAME_THRESHOLD)
+                if (++buffer_index >= line_len - END_GAME_THRESHOLD) {
                     break; //end of game
+                    play_tune(TUNE_GAMEOVER);
+                }
                 render_player(line0_buffer, line1_buffer, game, buffer_index);
                 show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
                 //update score:
@@ -555,10 +590,12 @@ int main(void)
 
                     if (start <= current_item_position && end >= current_item_position) {
                         game.playerScore +=3;
-
                         if (game.playerPos == current_item_position) {
 
                             game.playerScore += 2;
+                            play_tune(TUNE_PERFECT);
+                        } else {
+                            play_tune(TUNE_GOOD);
                         }
                     }
                 }
