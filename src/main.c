@@ -34,8 +34,8 @@
 #define BUTTON_DOWN   5
 #endif // NO_AVR
 
-#define MAX_LEN 128
-#define END_GAME_THRESHOLD 24
+#define MAX_LEN 96
+#define END_GAME_THRESHOLD 32
 #define LCD_WIDTH 16
 
 #define CHAR_WIDTH 1
@@ -569,7 +569,6 @@ int main(void)
             break;
 #endif
 
-            if (enable_slide && cycle % 5000 == 0) {
                 if (++buffer_index >= line_len - END_GAME_THRESHOLD) {
                     break; //end of game
                     play_tune(TUNE_GAMEOVER);
@@ -604,20 +603,20 @@ int main(void)
 #else
                 lcd_delay(10);
 #endif
-            }
+
 
             button_unlock();
         }
 
 
-        char scoreStr[23];
+        char scoreStr[16];
 
         float score = 1.0 * game.playerScore / game.maxScore;
 
-        for (int i=0; i<23; i++) {
+        for (int i=0; i<16; i++) {
             scoreStr[i] = ' ';
         }
-        int i = 3;
+        int i = 0;
         for (int j=1; j<5; j++) {
             scoreStr[i++] = ((int)(score * power(10, j)) % 10) + '0';
             if (j == 2) {
@@ -625,6 +624,7 @@ int main(void)
             }
         }
 
+        scoreStr[i++] = '%';
 
         for (int i = 0; i < buffer_size; ++i) {
             line0_buffer[i] = 0;
@@ -633,11 +633,11 @@ int main(void)
 
         show(&line0_buffer[0], &line1_buffer[0], 0, line_len);
 
-        scoreStr[i++] = '%';
+
 
         bestScore = MAX(bestScore, score);
 
-        i = 23 - 6;
+        i = 16 - 6;
         for (int j=1; j<5; j++) {
             scoreStr[i++] = ((int)(bestScore * power(10, j)) % 10) + '0';
             if (j == 2) {
@@ -647,7 +647,7 @@ int main(void)
         scoreStr[i++] = '%';
         scoreStr[i++] = '\0';
 
-        lcd_send_line1("  Score:    Best Score:");
+        lcd_send_line1("Score:    Best:");
         lcd_send_line2(scoreStr);
 
         while(1) {
@@ -669,4 +669,3 @@ int main(void)
 
     return 0;
 }
-
