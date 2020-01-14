@@ -40,6 +40,8 @@
 
 #define CHAR_WIDTH 1
 
+#define GAME_SPEED_RECIPROCAL 3
+
 #ifndef NO_AVR
 // GENERAL INIT - USED BY ALMOST EVERYTHING ----------------------------------
 
@@ -215,6 +217,7 @@ typedef struct Game_str {
 } Game;
 
 static void generate_map(unsigned char map[], int map_size) {
+    rnd_init();
     int i=0;
     while (i < map_size-END_GAME_THRESHOLD) {
         for(int j=0; j < 5; j++) {
@@ -482,10 +485,12 @@ static void play_note(int freq, int len) {
 
 static void play_tune(tune_t *tune) {
 #ifndef NO_AVR
+#ifdef SOUND_ON
     while (tune->freq != 0) {
         play_note(tune->freq, tune->length);
         ++tune;
     }
+#endif
 #endif
 }
 
@@ -505,15 +510,18 @@ int main(void)
     unsigned char line0_buffer[buffer_size];
     unsigned char line1_buffer[buffer_size];
     float bestScore = 0.0;
+    unsigned int last_x_index = -1;
+    unsigned char map[buffer_size];
+
+    Game game;
+    game.playerPos = 4;
+    game.maxScore = 0;
+    game.playerScore = 0;
+    game.playerWidth = 3;
+
+
+
     while(1) {
-        unsigned char map[buffer_size];
-
-        Game game;
-        game.playerPos = 4;
-        game.maxScore = 0;
-        game.playerScore = 0;
-        game.playerWidth = 3;
-
         generate_map(map, buffer_size);
 
         for (int i = 0; i < buffer_size; ++i) {
@@ -559,9 +567,9 @@ int main(void)
                 cycle = 0;
 
             int button = button_pressed();
-            if (button == BUTTON_UP) {
+            if (button == BUTTON_DOWN) {
                 game.playerPos = MAX(game.playerPos - 1, game.playerWidth / 2);
-            } else if (button == BUTTON_DOWN) {
+            } else if (button == BUTTON_UP) {
                 game.playerPos = MIN(game.playerPos + 1, 7 - game.playerWidth / 2);
             }
 #ifdef NO_AVR
@@ -569,39 +577,43 @@ int main(void)
             break;
 #endif
 
-                if (++buffer_index >= line_len - END_GAME_THRESHOLD) {
+                if (++buffer_index / GAME_SPEED_RECIPROCAL >= line_len - END_GAME_THRESHOLD) {
                     break; //end of game
                     play_tune(TUNE_GAMEOVER);
                 }
-                render_player(line0_buffer, line1_buffer, game, buffer_index);
-                show(&line0_buffer[0], &line1_buffer[0], buffer_index, line_len);
+                render_player(line0_buffer, line1_buffer, game, buffer_index / GAME_SPEED_RECIPROCAL);
+                show(&line0_buffer[0], &line1_buffer[0], buffer_index / GAME_SPEED_RECIPROCAL, line_len);
                 //update score:
-                int current_item_position = map[buffer_index] - 1;
-                if (current_item_position != -1) {
-                    int start = MAX((game.playerPos - (game.playerWidth / 2)), 0);
-                    int end = MIN((game.playerPos + (game.playerWidth / 2)), 7);
-                    if (current_item_position < game.playerWidth / 2 || current_item_position > (7 - (game.playerWidth / 2))) {
-                        // the player has no chance of getting the food with the center of their body
-                        game.maxScore += 3;
-                    } else {
-                        game.maxScore += 5;
-                    }
+                if (last_x_index != buffer_index / GAME_SPEED_RECIPROCAL) {
+                  last_x_index = buffer_index / GAME_SPEED_RECIPROCAL;
+                  int current_item_position = map[buffer_index / GAME_SPEED_RECIPROCAL] - 1;
+                  if (current_item_position != -1) {
+                      int start = MAX((game.playerPos - (game.playerWidth / 2)), 0);
+                      int end = MIN((game.playerPos + (game.playerWidth / 2)), 7);
+                      if (current_item_position < game.playerWidth / 2 || current_item_position > (7 - (game.playerWidth / 2))) {
+                          // the player has no chance of getting the food with the center of their body
+                          game.maxScore += 3;
+                      } else {
+                          game.maxScore += 5;
+                      }
 
-                    if (start <= current_item_position && end >= current_item_position) {
-                        game.playerScore +=3;
-                        if (game.playerPos == current_item_position) {
+                      if (start <= current_item_position && end >= current_item_position) {
+                          game.playerScore +=3;
+                          if (game.playerPos == current_item_position) {
 
-                            game.playerScore += 2;
-                            play_tune(TUNE_PERFECT);
-                        } else {
-                            play_tune(TUNE_GOOD);
-                        }
-                    }
+                              game.playerScore += 2;
+                              play_tune(TUNE_PERFECT);
+                          } else {
+                              play_tune(TUNE_GOOD);
+                          }
+                      }
+                  }
                 }
+
 #ifdef NO_AVR
-                lcd_delay(70);
+                lcd_delay(100);
 #else
-                lcd_delay(10);
+                lcd_delay(100);
 #endif
 
 
@@ -653,6 +665,7 @@ int main(void)
         while(1) {
             int button = button_pressed();
             if (button == BUTTON_CENTER) {
+                lcd_send_command(CLR_DISP);
                 break;
             }
             #ifdef NO_AVR
